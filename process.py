@@ -13,7 +13,6 @@ REGION = 'ap-northeast-1'
 
 # 从新消费n分钟之前的数据，再早的数据任务过时
 TimeTolerant = 1000 * 60 * 0
-kinesis_stream = "jizhan_profile"
 status_tb = "status-user-profile"
 
 profile_bucket = "jizhan"
