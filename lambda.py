@@ -13,13 +13,28 @@ model_folder = "model"
 file_f = "https://{0}.s3.ap-northeast-1.amazonaws.com/{1}/{2}.glb"
 
 sqs_url = "https://sqs.ap-northeast-1.amazonaws.com/515491257789/jianzhan-profile-sqs"
+key_paramas_length = 3
 
+def raise_error(code, msg):
+    return {
+            "statusCode": code,
+            "body": json.dumps({
+                "error ": msg
+            })
+        }
 
 def lambda_handler(event, context):
     body_str = event["body"]
     body = json.loads(body_str)
+   
     img_name = body["name"]
+    params = body["params"]
     img_raw_data = body["data"]
+
+    if len(params) < key_paramas_length:
+        return raise_error(400, "params should be an array, and bigger than {0}!".format(key_paramas_length))
+
+    params  = [str(item) for item in params]
 
     img_raw_bytes = img_raw_data.encode("utf-8")
     img_data = base64.b64decode(img_raw_bytes)
@@ -40,6 +55,11 @@ def lambda_handler(event, context):
             'status': {
                 'Value': {
                     'S': 'begin'}
+            },
+            'preference': {
+                'Value': {
+                    'S': ",".join(params)
+                }
             }
         }
     )
@@ -60,9 +80,11 @@ def lambda_handler(event, context):
 
     os.remove(temp_file_path)
 
+    key_params = params[0:key_paramas_length]
     k_info = {
         "request_id": request_id,
-        "file_name": new_image_name
+        "file_name": new_image_name,
+        "params":"_".join(key_params)
     }
     str_info = json.dumps(k_info)
     sqs = session.client('sqs', region_name=REGION)

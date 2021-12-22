@@ -15,17 +15,21 @@ REGION = 'ap-northeast-1'
 TimeTolerant = 1000 * 60 * 0
 status_tb = "status-user-profile"
 
+# s3 配置
 profile_bucket = "jizhan"
 profile_folder = "profile"
-model_folder = "model"
+bucket_model_folder = "model"
 #
-modeling_timeout = 10
+modeling_timeout = 40
 
+# 本地文件路径配置
 # output_folder = "model-viewer/packages/modelviewer.dev/shared-assets/models/"
 output_folder = "/home/ec2-user/work/jizhan/work/temp"
 output_file_name = "final3c2.glb"
 shell_path = "/home/ec2-user/work/jizhan/work/ml.sh"
 output_model_prefix = "glb"
+
+hair_model_folder = "/home/ec2-user/work/jizhan/work/hair"
 
 sqs_url = "https://sqs.ap-northeast-1.amazonaws.com/515491257789/jianzhan-profile-sqs"
 
@@ -58,8 +62,30 @@ class MsgThread(Thread):
                     )
                     request_id = body["request_id"]
                     file_name = body["file_name"]
+                    params = body["params"]
                     print("receive data : {0}".format(body))
+                    
+                    hair_model = "{0}/{1}/{2}.fbx".format(hair_model_folder,params,params)
+                    hair_model_texture = "{0}/{1}/{2}.png".format(hair_model_folder,params,params)
+                    
+                    status = "bad"
+                    print(hair_model)
+                    if os.path.exists(hair_model) and os.path.exists(hair_model_texture) :
+                        status = "processing"
+                        download_profile_path = "{0}/{1}".format(output_folder, file_name)
+                        with open(download_profile_path, 'wb') as data:
+                            file_key = "{0}/{1}".format(profile_folder, file_name)
+                            s3.download_fileobj(profile_bucket, file_key, data)
 
+                        self.task_queue.put(
+                            {
+                                "request_id": request_id,
+                                "file_path": download_profile_path,
+                                "hair_model":hair_model,
+                                "hair_model_texture":hair_model
+                            }
+                        )
+                    
                     dynamodb.update_item(
                         TableName=status_tb,
                         Key={
@@ -70,19 +96,8 @@ class MsgThread(Thread):
                         AttributeUpdates={
                             'status': {
                                 'Value': {
-                                    'S': 'processing'}
+                                    'S': status}
                             }
-                        }
-                    )
-                    download_profile_path = "{0}/{1}".format(output_folder, file_name)
-                    with open(download_profile_path, 'wb') as data:
-                        file_key = "{0}/{1}".format(profile_folder, file_name)
-                        s3.download_fileobj(profile_bucket, file_key, data)
-
-                    self.task_queue.put(
-                        {
-                            "request_id": request_id,
-                            "file_path": download_profile_path
                         }
                     )
 
@@ -104,27 +119,33 @@ class ModelThread(Thread):
             print("get process task {0}".format(task))
             request_id = task["request_id"]
             face_file_path = task["file_path"]
-            hair_file_path = ""
-            hair_texture_path = ""
+            hair_model = task["hair_model"]
+            hair_model_texture = task["hair_model_texture"]
+            
+            status = "done"
+            while True:
 
-            output_file = "{0}/{1}".format(output_folder, output_file_name)
-            if os.path.exists(output_file):
-                os.remove(output_file)
-
-            print("prepare output_file {0}".format(output_file))
-            subprocess.call(["bash", shell_path, face_file_path, hair_file_path, hair_texture_path])
-            # subprocess.call([shell_path, face_file_path, hair_file_path, hair_texture_path])
-
-            is_exist = False
-            for i in range(0, modeling_timeout*5):
-                time.sleep(0.2)
+                output_file = "{0}/{1}".format(output_folder, output_file_name)
                 if os.path.exists(output_file):
-                    is_exist = True
+                    os.remove(output_file)
+
+                print("prepare output_file {0}".format(output_file))
+                subprocess.call(["bash", shell_path, face_file_path, hair_model, hair_model_texture])
+                # subprocess.call([shell_path, face_file_path, hair_file_path, hair_texture_path])
+
+                is_exist = False
+                for i in range(0, modeling_timeout*5):
+                    if os.path.exists(output_file):
+                        is_exist = True
+                        break
+                    time.sleep(0.2)
+                    
+                if not is_exist:
+                    status = "timeout"
                     break
 
-            if is_exist:
                 print("get output_file {0}".format(output_file))
-                output_model = '{0}/{1}.{2}'.format(model_folder, request_id, output_model_prefix)
+                output_model = '{0}/{1}.{2}'.format(bucket_model_folder, request_id, output_model_prefix)
                 with open(output_file, 'rb') as f:
                     s3_status = s3.upload_fileobj(f, profile_bucket, output_model)
                     print(s3_status)
@@ -137,8 +158,8 @@ class ModelThread(Thread):
                 )
                 os.remove(output_file)
                 os.remove(face_file_path)
-
-            status = "done" if is_exist else "timeout"
+                break
+                
             r = dynamodb.update_item(
                 TableName=status_tb,
                 Key={
@@ -153,7 +174,7 @@ class ModelThread(Thread):
                     }
                 }
             )
-            print(r)
+            print(status)
 
 
 if __name__ == '__main__':
