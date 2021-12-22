@@ -124,11 +124,17 @@ class ModelThread(Thread):
 
             if is_exist:
                 print("get output_file {0}".format(output_file))
+                output_model = '{0}/{1}.{2}'.format(model_folder, request_id, output_model_prefix)
                 with open(output_file, 'rb') as f:
-                    s3_status = s3.upload_fileobj(f, 'jizhan', '{0}/{1}.{2}'.format(model_folder, request_id, output_model_prefix))
+                    s3_status = s3.upload_fileobj(f, profile_bucket, output_model)
                     print(s3_status)
 
                 time.sleep(0.1)
+                s3.put_object_acl(
+                    ACL='public-read',
+                    Bucket=profile_bucket,
+                    Key=output_model
+                )
                 os.remove(output_file)
                 os.remove(face_file_path)
 
